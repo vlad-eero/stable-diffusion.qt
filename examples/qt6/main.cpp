@@ -90,7 +90,7 @@ protected:
                                      params_.vae_path.c_str(), "", "", "", "", "",
                                      true, false, true, params_.n_threads,
                                      SD_TYPE_COUNT, CUDA_RNG, DEFAULT,
-                                     false, false, false, false);
+                                     false, false, false, false, false, false, 0);
 
         if (!sd_ctx) {
             emit finished(false, "Failed to initialize SD context", "", args);
