@@ -1,6 +1,7 @@
 build*/
 cmake-build-*/
 test/
+output/
 .vscode/
 .idea/
 .cache/
@@ -12,4 +13,3 @@ test/
 output*.png
 models*
 *.log
-preview.png
