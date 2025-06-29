@@ -61,10 +61,10 @@ enum schedule_t {
 
 // same as enum ggml_type
 enum sd_type_t {
-    SD_TYPE_F32     = 0,
-    SD_TYPE_F16     = 1,
-    SD_TYPE_Q4_0    = 2,
-    SD_TYPE_Q4_1    = 3,
+    SD_TYPE_F32  = 0,
+    SD_TYPE_F16  = 1,
+    SD_TYPE_Q4_0 = 2,
+    SD_TYPE_Q4_1 = 3,
     // SD_TYPE_Q4_2 = 4, support has been removed
     // SD_TYPE_Q4_3 = 5, support has been removed
     SD_TYPE_Q5_0    = 6,
@@ -95,12 +95,12 @@ enum sd_type_t {
     // SD_TYPE_Q4_0_4_4 = 31, support has been removed from gguf files
     // SD_TYPE_Q4_0_4_8 = 32,
     // SD_TYPE_Q4_0_8_8 = 33,
-    SD_TYPE_TQ1_0   = 34,
-    SD_TYPE_TQ2_0   = 35,
+    SD_TYPE_TQ1_0 = 34,
+    SD_TYPE_TQ2_0 = 35,
     // SD_TYPE_IQ4_NL_4_4 = 36,
     // SD_TYPE_IQ4_NL_4_8 = 37,
     // SD_TYPE_IQ4_NL_8_8 = 38,
-    SD_TYPE_COUNT   = 39,
+    SD_TYPE_COUNT = 39,
 };
 
 SD_API const char* sd_type_name(enum sd_type_t type);
@@ -150,7 +150,10 @@ SD_API sd_ctx_t* new_sd_ctx(const char* model_path,
                             bool keep_clip_on_cpu,
                             bool keep_control_net_cpu,
                             bool keep_vae_on_cpu,
-                            bool diffusion_flash_attn);
+                            bool diffusion_flash_attn,
+                            bool chroma_use_dit_mask,
+                            bool chroma_use_t5_mask,
+                            int chroma_t5_mask_pad);
 
 SD_API void free_sd_ctx(sd_ctx_t* sd_ctx);
 
