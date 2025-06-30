@@ -297,13 +297,11 @@ private slots:
         if (jobQueue_.isEmpty()) {
             progressBar_->setVisible(false);
             jobsProgressLabel_->setVisible(false);
-            cancelBtn_->setEnabled(false);
             return;
         }
         
         progressBar_->setVisible(true);
         jobsProgressLabel_->setVisible(true);
-        cancelBtn_->setEnabled(true);
         
         SDParams params = jobQueue_.dequeue();
         currentWorker_ = new GenerationWorker(params);
@@ -320,17 +318,7 @@ private slots:
         }
     }
     
-    void cancelJob() {
-        if (currentWorker_) {
-            currentWorker_->terminate();
-            currentWorker_->wait();
-            currentWorker_->deleteLater();
-            currentWorker_ = nullptr;
-            progressBar_->setVisible(false);
-            jobsProgressLabel_->setVisible(false);
-            cancelBtn_->setEnabled(false);
-        }
-    }
+
 
 private:
     void setupUI() {
@@ -454,12 +442,6 @@ private:
         generateBtn_ = new QPushButton("Generate");
         generateBtn_->setMinimumHeight(40);
         layout->addWidget(generateBtn_);
-        
-        // Cancel button
-        cancelBtn_ = new QPushButton("Cancel");
-        cancelBtn_->setMinimumHeight(40);
-        cancelBtn_->setEnabled(false);
-        layout->addWidget(cancelBtn_);
 
         // Progress bar
         progressBar_ = new QProgressBar;
@@ -528,7 +510,6 @@ private:
         connect(browseOutputBtn_, &QPushButton::clicked, this, &MainWindow::browseOutput);
         connect(modeCombo_, QOverload<int>::of(&QComboBox::currentIndexChanged), this, &MainWindow::onModeChanged);
         connect(generateBtn_, &QPushButton::clicked, this, &MainWindow::generate);
-        connect(cancelBtn_, &QPushButton::clicked, this, &MainWindow::cancelJob);
     }
 
     void saveSettings() {
@@ -599,7 +580,6 @@ private:
     QSpinBox* threads_;
     QCheckBox* verbose_;
     QPushButton* generateBtn_;
-    QPushButton* cancelBtn_;
     QProgressBar* progressBar_;
     QTabWidget* tabWidget_;
     QLabel* jobsProgressLabel_;
