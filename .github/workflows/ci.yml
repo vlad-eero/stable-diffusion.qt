@@ -1,0 +1,80 @@
+name: CI
+
+on:
+  push:
+    branches: [master, main]
+  pull_request:
+    branches: [master, main]
+  workflow_dispatch:
+
+env:
+  BUILD_TYPE: Release
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        include:
+          - os: ubuntu-latest
+            cmake_flags: "-DGGML_AVX2=ON -DSD_BUILD_SHARED_LIBS=ON -DSD_BUILD_EXAMPLES=OFF"
+          - os: macos-latest  
+            cmake_flags: "-DGGML_AVX2=ON -DCMAKE_OSX_ARCHITECTURES='arm64;x86_64' -DSD_BUILD_SHARED_LIBS=ON -DSD_BUILD_EXAMPLES=OFF"
+          - os: windows-latest
+            cmake_flags: "-DGGML_AVX2=ON -DSD_BUILD_SHARED_LIBS=ON -DSD_BUILD_EXAMPLES=OFF"
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        submodules: recursive
+
+    - name: Setup dependencies (Ubuntu)
+      if: matrix.os == 'ubuntu-latest'
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y build-essential
+
+    - name: Configure CMake
+      run: cmake -B build -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }} ${{ matrix.cmake_flags }}
+
+    - name: Build
+      run: cmake --build build --config ${{ env.BUILD_TYPE }} --parallel
+
+    - name: Upload artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: stable-diffusion-${{ matrix.os }}
+        path: build/bin/
+
+  cuda-build:
+    runs-on: ubuntu-22.04
+
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        submodules: recursive
+
+    - name: Install CUDA
+      run: |
+        wget https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2204/x86_64/cuda-keyring_1.0-1_all.deb
+        sudo dpkg -i cuda-keyring_1.0-1_all.deb
+        sudo apt-get update
+        sudo apt-get install -y cuda-toolkit-12-2 build-essential cmake
+
+    - name: Configure CMake
+      run: |
+        export PATH=/usr/local/cuda/bin:$PATH
+        cmake -B build -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }} -DSD_CUDA=ON -DSD_BUILD_SHARED_LIBS=ON -DSD_BUILD_EXAMPLES=OFF -DCMAKE_CUDA_ARCHITECTURES="75;80;86;89;90"
+
+    - name: Build
+      run: |
+        export PATH=/usr/local/cuda/bin:$PATH
+        cmake --build build --config ${{ env.BUILD_TYPE }} -j2
+
+    - name: Upload artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: stable-diffusion-cuda
+        path: build/bin/
