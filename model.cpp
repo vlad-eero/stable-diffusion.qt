@@ -17,6 +17,7 @@
 #include "stable-diffusion.h"
 #include "util.h"
 #include "vocab.hpp"
+#include "vocab_mistral.hpp"
 #include "vocab_qwen.hpp"
 #include "vocab_umt5.hpp"
 
@@ -102,10 +103,15 @@ const char* unused_tensors[] = {
     "model_ema.diffusion_model",
     "embedding_manager",
     "denoiser.sigmas",
-    "edm_vpred.sigma_max",
     "text_encoders.t5xxl.transformer.encoder.embed_tokens.weight",  // only used during training
-    "text_encoders.qwen2vl.output.weight",
-    "text_encoders.qwen2vl.lm_head.",
+    "ztsnr",                                                        // Found in some SDXL vpred models
+    "edm_vpred.sigma_min",                                          // Found in CosXL
+    // TODO: find another way to avoid the "unknown tensor" for these two
+    // "edm_vpred.sigma_max", // Used to detect CosXL
+    // "v_pred", // Used to detect SDXL vpred models
+    "text_encoders.llm.output.weight",
+    "text_encoders.llm.lm_head.",
+    "first_stage_model.bn.",
 };
 
 bool is_unused_tensor(std::string name) {
@@ -115,11 +121,6 @@ bool is_unused_tensor(std::string name) {
         }
     }
     return false;
-}
-
-float bf16_to_f32(uint16_t bfloat16) {
-    uint32_t val_bits = (static_cast<uint32_t>(bfloat16) << 16);
-    return *reinterpret_cast<float*>(&val_bits);
 }
 
 uint16_t f8_e4m3_to_f16(uint8_t f8) {
@@ -204,13 +205,6 @@ uint16_t f8_e5m2_to_f16(uint8_t fp8) {
     return fp16_sign | (fp16_exponent << 10) | fp16_mantissa;
 }
 
-void bf16_to_f32_vec(uint16_t* src, float* dst, int64_t n) {
-    // support inplace op
-    for (int64_t i = n - 1; i >= 0; i--) {
-        dst[i] = bf16_to_f32(src[i]);
-    }
-}
-
 void f8_e4m3_to_f16_vec(uint8_t* src, uint16_t* dst, int64_t n) {
     // support inplace op
     for (int64_t i = n - 1; i >= 0; i--) {
@@ -263,8 +257,8 @@ void convert_tensor(void* src,
         } else {
             auto qtype = ggml_get_type_traits(src_type);
             if (qtype->to_float == nullptr) {
-                throw std::runtime_error(format("type %s unsupported for integer quantization: no dequantization available",
-                                                ggml_type_name(src_type)));
+                throw std::runtime_error(sd_format("type %s unsupported for integer quantization: no dequantization available",
+                                                   ggml_type_name(src_type)));
             }
             qtype->to_float(src, (float*)dst, n);
         }
@@ -273,8 +267,8 @@ void convert_tensor(void* src,
         // src_type is quantized => dst_type == GGML_TYPE_F16 or dst_type is quantized
         auto qtype = ggml_get_type_traits(src_type);
         if (qtype->to_float == nullptr) {
-            throw std::runtime_error(format("type %s unsupported for integer quantization: no dequantization available",
-                                            ggml_type_name(src_type)));
+            throw std::runtime_error(sd_format("type %s unsupported for integer quantization: no dequantization available",
+                                               ggml_type_name(src_type)));
         }
         std::vector<char> buf;
         buf.resize(sizeof(float) * n);
@@ -489,7 +483,7 @@ ggml_type str_to_ggml_type(const std::string& dtype) {
     if (dtype == "F16") {
         ttype = GGML_TYPE_F16;
     } else if (dtype == "BF16") {
-        ttype = GGML_TYPE_F32;
+        ttype = GGML_TYPE_BF16;
     } else if (dtype == "F32") {
         ttype = GGML_TYPE_F32;
     } else if (dtype == "F64") {
@@ -617,10 +611,7 @@ bool ModelLoader::init_from_safetensors_file(const std::string& file_path, const
 
         size_t tensor_data_size = end - begin;
 
-        if (dtype == "BF16") {
-            tensor_storage.is_bf16 = true;
-            GGML_ASSERT(tensor_storage.nbytes() == tensor_data_size * 2);
-        } else if (dtype == "F8_E4M3") {
+        if (dtype == "F8_E4M3") {
             tensor_storage.is_f8_e4m3 = true;
             // f8 -> f16
             GGML_ASSERT(tensor_storage.nbytes() == tensor_data_size * 2);
@@ -1062,6 +1053,15 @@ SDVersion ModelLoader::get_sd_version() {
             if (tensor_storage.name.find("model.diffusion_model.transformer_blocks.0.img_mod.1.weight") != std::string::npos) {
                 return VERSION_QWEN_IMAGE;
             }
+            if (tensor_storage.name.find("model.diffusion_model.double_stream_modulation_img.lin.weight") != std::string::npos) {
+                return VERSION_FLUX2;
+            }
+            if (tensor_storage.name.find("model.diffusion_model.double_blocks.0.img_mlp.gate_proj.weight") != std::string::npos) {
+                return VERSION_OVIS_IMAGE;
+            }
+            if (tensor_storage.name.find("model.diffusion_model.cap_embedder.0.weight") != std::string::npos) {
+                return VERSION_Z_IMAGE;
+            }
             if (tensor_storage.name.find("model.diffusion_model.blocks.0.cross_attn.norm_k.weight") != std::string::npos) {
                 is_wan = true;
             }
@@ -1320,6 +1320,16 @@ std::string ModelLoader::load_qwen2_merges() {
     return merges_utf8_str;
 }
 
+std::string ModelLoader::load_mistral_merges() {
+    std::string merges_utf8_str(reinterpret_cast<const char*>(mistral_merges_utf8_c_str), sizeof(mistral_merges_utf8_c_str));
+    return merges_utf8_str;
+}
+
+std::string ModelLoader::load_mistral_vocab_json() {
+    std::string json_str(reinterpret_cast<const char*>(mistral_vocab_json_utf8_c_str), sizeof(mistral_vocab_json_utf8_c_str));
+    return json_str;
+}
+
 std::string ModelLoader::load_t5_tokenizer_json() {
     std::string json_str(reinterpret_cast<const char*>(t5_tokenizer_json_str), sizeof(t5_tokenizer_json_str));
     return json_str;
@@ -1337,7 +1347,7 @@ bool ModelLoader::load_tensors(on_new_tensor_cb_t on_new_tensor_cb, int n_thread
     std::atomic<int64_t> copy_to_backend_time_ms(0);
     std::atomic<int64_t> convert_time_ms(0);
 
-    int num_threads_to_use = n_threads_p > 0 ? n_threads_p : get_num_physical_cores();
+    int num_threads_to_use = n_threads_p > 0 ? n_threads_p : sd_get_num_physical_cores();
     LOG_DEBUG("using %d threads for model loading", num_threads_to_use);
 
     int64_t start_time = ggml_time_ms();
@@ -1500,9 +1510,7 @@ bool ModelLoader::load_tensors(on_new_tensor_cb_t on_new_tensor_cb, int n_thread
                     read_time_ms.fetch_add(t1 - t0);
 
                     t0 = ggml_time_ms();
-                    if (tensor_storage.is_bf16) {
-                        bf16_to_f32_vec((uint16_t*)read_buf, (float*)target_buf, tensor_storage.nelements());
-                    } else if (tensor_storage.is_f8_e4m3) {
+                    if (tensor_storage.is_f8_e4m3) {
                         f8_e4m3_to_f16_vec((uint8_t*)read_buf, (uint16_t*)target_buf, tensor_storage.nelements());
                     } else if (tensor_storage.is_f8_e5m2) {
                         f8_e5m2_to_f16_vec((uint8_t*)read_buf, (uint16_t*)target_buf, tensor_storage.nelements());
@@ -1512,6 +1520,11 @@ bool ModelLoader::load_tensors(on_new_tensor_cb_t on_new_tensor_cb, int n_thread
                         i64_to_i32_vec((int64_t*)read_buf, (int32_t*)target_buf, tensor_storage.nelements());
                     }
                     if (tensor_storage.type != dst_tensor->type) {
+                        if (convert_buf == nullptr) {
+                            LOG_ERROR("read tensor data failed: too less memory for conversion");
+                            failed = true;
+                            return;
+                        }
                         convert_tensor((void*)target_buf,
                                        tensor_storage.type,
                                        convert_buf,
@@ -1724,6 +1737,13 @@ bool ModelLoader::save_to_gguf_file(const std::string& file_path, ggml_type type
         // tensor_storage.ne[0], tensor_storage.ne[1], tensor_storage.ne[2], tensor_storage.ne[3],
         // tensor->n_dims, tensor->ne[0], tensor->ne[1], tensor->ne[2], tensor->ne[3]);
 
+        if (!tensor->data) {
+            GGML_ASSERT(ggml_nelements(tensor) == 0);
+            // avoid crashing the gguf writer by setting a dummy pointer for zero-sized tensors
+            LOG_DEBUG("setting dummy pointer for zero-sized tensor %s", name.c_str());
+            tensor->data = ggml_get_mem_buffer(ggml_ctx);
+        }
+
         *dst_tensor = tensor;
 
         gguf_add_tensor(gguf_ctx, tensor);
@@ -1763,7 +1783,12 @@ int64_t ModelLoader::get_params_mem_size(ggml_backend_t backend, ggml_type type)
     return mem_size;
 }
 
-bool convert(const char* input_path, const char* vae_path, const char* output_path, sd_type_t output_type, const char* tensor_type_rules) {
+bool convert(const char* input_path,
+             const char* vae_path,
+             const char* output_path,
+             sd_type_t output_type,
+             const char* tensor_type_rules,
+             bool convert_name) {
     ModelLoader model_loader;
 
     if (!model_loader.init_from_file(input_path)) {
@@ -1777,7 +1802,9 @@ bool convert(const char* input_path, const char* vae_path, const char* output_pa
             return false;
         }
     }
-    model_loader.convert_tensors_name();
+    if (convert_name) {
+        model_loader.convert_tensors_name();
+    }
     bool success = model_loader.save_to_gguf_file(output_path, (ggml_type)output_type, tensor_type_rules);
     return success;
 }

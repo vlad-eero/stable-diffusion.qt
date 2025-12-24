@@ -9,3 +9,5 @@ if(Qt6_FOUND)
 else()
     message(STATUS "Qt6 not found, skipping Qt6 example")
 endif()
+
+add_subdirectory(server)

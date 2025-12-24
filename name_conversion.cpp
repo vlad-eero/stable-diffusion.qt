@@ -127,12 +127,14 @@ std::string convert_cond_stage_model_name(std::string name, std::string prefix) 
         {"token_embd.", "shared."},
     };
 
-    static const std::vector<std::pair<std::string, std::string>> qwenvl_name_map{
+    static const std::vector<std::pair<std::string, std::string>> llm_name_map{
         {"token_embd.", "model.embed_tokens."},
         {"blk.", "model.layers."},
         {"attn_q.", "self_attn.q_proj."},
         {"attn_k.", "self_attn.k_proj."},
         {"attn_v.", "self_attn.v_proj."},
+        {"attn_q_norm.", "self_attn.q_norm."},
+        {"attn_k_norm.", "self_attn.k_norm."},
         {"attn_output.", "self_attn.o_proj."},
         {"attn_norm.", "input_layernorm."},
         {"ffn_down.", "mlp.down_proj."},
@@ -142,7 +144,7 @@ std::string convert_cond_stage_model_name(std::string name, std::string prefix) 
         {"output_norm.", "model.norm."},
     };
 
-    static const std::vector<std::pair<std::string, std::string>> qwenvl_vision_name_map{
+    static const std::vector<std::pair<std::string, std::string>> llm_vision_name_map{
         {"mm.", "merger.mlp."},
         {"v.post_ln.", "merger.ln_q."},
         {"v.patch_embd.weight", "patch_embed.proj.0.weight"},
@@ -161,11 +163,11 @@ std::string convert_cond_stage_model_name(std::string name, std::string prefix) 
     };
     if (contains(name, "t5xxl")) {
         replace_with_name_map(name, t5_name_map);
-    } else if (contains(name, "qwen2vl")) {
-        if (contains(name, "qwen2vl.visual")) {
-            replace_with_name_map(name, qwenvl_vision_name_map);
+    } else if (contains(name, "llm")) {
+        if (contains(name, "llm.visual")) {
+            replace_with_name_map(name, llm_vision_name_map);
         } else {
-            replace_with_name_map(name, qwenvl_name_map);
+            replace_with_name_map(name, llm_name_map);
         }
     } else {
         name = convert_open_clip_to_hf_clip_name(name);
@@ -613,6 +615,44 @@ std::string convert_diffusers_dit_to_original_flux(std::string name) {
     return name;
 }
 
+std::string convert_diffusers_dit_to_original_lumina2(std::string name) {
+    int num_layers         = 30;
+    int num_refiner_layers = 2;
+    static std::unordered_map<std::string, std::string> z_image_name_map;
+
+    if (z_image_name_map.empty()) {
+        z_image_name_map["all_x_embedder.2-1."]  = "x_embedder.";
+        z_image_name_map["all_final_layer.2-1."] = "final_layer.";
+
+        // --- transformer blocks ---
+        auto add_attention_map = [&](const std::string& prefix, int num) {
+            for (int i = 0; i < num; ++i) {
+                std::string block_prefix = prefix + std::to_string(i) + ".";
+                std::string dst_prefix   = prefix + std::to_string(i) + ".";
+
+                z_image_name_map[block_prefix + "attention.norm_q."]   = dst_prefix + "attention.q_norm.";
+                z_image_name_map[block_prefix + "attention.norm_k."]   = dst_prefix + "attention.k_norm.";
+                z_image_name_map[block_prefix + "attention.to_out.0."] = dst_prefix + "attention.out.";
+
+                z_image_name_map[block_prefix + "attention.to_q.weight"] = dst_prefix + "attention.qkv.weight";
+                z_image_name_map[block_prefix + "attention.to_q.bias"]   = dst_prefix + "attention.qkv.bias";
+                z_image_name_map[block_prefix + "attention.to_k.weight"] = dst_prefix + "attention.qkv.weight.1";
+                z_image_name_map[block_prefix + "attention.to_k.bias"]   = dst_prefix + "attention.qkv.bias.1";
+                z_image_name_map[block_prefix + "attention.to_v.weight"] = dst_prefix + "attention.qkv.weight.2";
+                z_image_name_map[block_prefix + "attention.to_v.bias"]   = dst_prefix + "attention.qkv.bias.2";
+            }
+        };
+
+        add_attention_map("noise_refiner.", num_refiner_layers);
+        add_attention_map("context_refiner.", num_refiner_layers);
+        add_attention_map("layers.", num_layers);
+    }
+
+    replace_with_prefix_map(name, z_image_name_map);
+
+    return name;
+}
+
 std::string convert_diffusion_model_name(std::string name, std::string prefix, SDVersion version) {
     if (sd_version_is_sd1(version) || sd_version_is_sd2(version)) {
         name = convert_diffusers_unet_to_original_sd1(name);
@@ -620,8 +660,10 @@ std::string convert_diffusion_model_name(std::string name, std::string prefix, S
         name = convert_diffusers_unet_to_original_sdxl(name);
     } else if (sd_version_is_sd3(version)) {
         name = convert_diffusers_dit_to_original_sd3(name);
-    } else if (sd_version_is_flux(version)) {
+    } else if (sd_version_is_flux(version) || sd_version_is_flux2(version)) {
         name = convert_diffusers_dit_to_original_flux(name);
+    } else if (sd_version_is_z_image(version)) {
+        name = convert_diffusers_dit_to_original_lumina2(name);
     }
     return name;
 }
@@ -722,6 +764,11 @@ std::string convert_diffusers_vae_to_original_sd1(std::string name) {
 }
 
 std::string convert_first_stage_model_name(std::string name, std::string prefix) {
+    static std::unordered_map<std::string, std::string> vae_name_map = {
+        {"decoder.post_quant_conv.", "post_quant_conv."},
+        {"encoder.quant_conv.", "quant_conv."},
+    };
+    replace_with_prefix_map(name, vae_name_map);
     name = convert_diffusers_vae_to_original_sd1(name);
     return name;
 }
@@ -788,6 +835,7 @@ std::string convert_sep_to_dot(std::string name) {
         "proj_out",
         "transformer_blocks",
         "single_transformer_blocks",
+        "single_blocks",
         "diffusion_model",
         "cond_stage_model",
         "first_stage_model",
@@ -829,7 +877,18 @@ std::string convert_sep_to_dot(std::string name) {
         "ff_context",
         "norm_added_q",
         "norm_added_v",
-        "to_add_out"};
+        "to_add_out",
+        "txt_mod",
+        "img_mod",
+        "txt_mlp",
+        "img_mlp",
+        "proj_mlp",
+        "wi_0",
+        "wi_1",
+        "norm1_context",
+        "ff_context",
+        "x_embedder",
+    };
 
     // record the positions of underscores that should NOT be replaced
     std::unordered_set<size_t> protected_positions;
@@ -973,12 +1032,14 @@ std::string convert_tensor_name(std::string name, SDVersion version) {
             }
         }
 
-        if (sd_version_is_unet(version) || is_lycoris_underline) {
+        // LOG_DEBUG("name %s %d", name.c_str(), version);
+
+        if (sd_version_is_unet(version) || sd_version_is_flux(version) || is_lycoris_underline) {
             name = convert_sep_to_dot(name);
         }
     }
 
-    std::vector<std::pair<std::string, std::string>> prefix_map = {
+    std::unordered_map<std::string, std::string> prefix_map = {
         {"diffusion_model.", "model.diffusion_model."},
         {"unet.", "model.diffusion_model."},
         {"transformer.", "model.diffusion_model."},  // dit
@@ -993,7 +1054,12 @@ std::string convert_tensor_name(std::string name, SDVersion version) {
         // {"te2.text_model.encoder.layers.", "cond_stage_model.1.model.transformer.resblocks."},
         {"te2.", "cond_stage_model.1.transformer."},
         {"te1.", "cond_stage_model.transformer."},
+        {"te3.", "text_encoders.t5xxl.transformer."},
     };
+
+    if (sd_version_is_flux(version)) {
+        prefix_map["te1."] = "text_encoders.clip_l.transformer.";
+    }
 
     replace_with_prefix_map(name, prefix_map);
 
