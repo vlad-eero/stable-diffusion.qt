@@ -3,6 +3,7 @@
 #include <cmath>
 #include <codecvt>
 #include <cstdarg>
+#include <ctime>
 #include <fstream>
 #include <locale>
 #include <regex>
@@ -279,8 +280,14 @@ void log_printf(sd_log_level_t level, const char* file, int line, const char* fo
     va_list args;
     va_start(args, format);
 
+    // Get current time
+    time_t now = time(nullptr);
+    struct tm* local_time = localtime(&now);
+    char time_str[16];
+    strftime(time_str, sizeof(time_str), "%H:%M:%S", local_time);
+
     static char log_buffer[LOG_BUFFER_SIZE + 1];
-    int written = snprintf(log_buffer, LOG_BUFFER_SIZE, "%s:%-4d - ", sd_basename(file).c_str(), line);
+    int written = snprintf(log_buffer, LOG_BUFFER_SIZE, "[%s] %s:%-4d - ", time_str, sd_basename(file).c_str(), line);
 
     if (written >= 0 && written < LOG_BUFFER_SIZE) {
         vsnprintf(log_buffer + written, LOG_BUFFER_SIZE - written, format, args);
@@ -553,8 +560,8 @@ sd_image_f32_t clip_preprocess(sd_image_f32_t image, int target_width, int targe
 //  ['.', 1.1]]
 std::vector<std::pair<std::string, float>> parse_prompt_attention(const std::string& text) {
     std::vector<std::pair<std::string, float>> res;
-    std::vector<int> round_brackets;
-    std::vector<int> square_brackets;
+    std::vector<size_t> round_brackets;
+    std::vector<size_t> square_brackets;
 
     float round_bracket_multiplier  = 1.1f;
     float square_bracket_multiplier = 1 / 1.1f;
@@ -562,8 +569,8 @@ std::vector<std::pair<std::string, float>> parse_prompt_attention(const std::str
     std::regex re_attention(R"(\\\(|\\\)|\\\[|\\\]|\\\\|\\|\(|\[|:([+-]?[.\d]+)\)|\)|\]|\bBREAK\b|[^\\()\[\]:B]+|:|\bB)");
     std::regex re_break(R"(\s*\bBREAK\b\s*)");
 
-    auto multiply_range = [&](int start_position, float multiplier) {
-        for (int p = start_position; p < res.size(); ++p) {
+    auto multiply_range = [&](size_t start_position, float multiplier) {
+        for (size_t p = start_position; p < res.size(); ++p) {
             res[p].second *= multiplier;
         }
     };
@@ -576,9 +583,9 @@ std::vector<std::pair<std::string, float>> parse_prompt_attention(const std::str
         std::string weight = m[1];
 
         if (text == "(") {
-            round_brackets.push_back((int)res.size());
+            round_brackets.push_back(res.size());
         } else if (text == "[") {
-            square_brackets.push_back((int)res.size());
+            square_brackets.push_back(res.size());
         } else if (!weight.empty()) {
             if (!round_brackets.empty()) {
                 multiply_range(round_brackets.back(), std::stof(weight));
@@ -601,11 +608,11 @@ std::vector<std::pair<std::string, float>> parse_prompt_attention(const std::str
         remaining_text = m.suffix();
     }
 
-    for (int pos : round_brackets) {
+    for (size_t pos : round_brackets) {
         multiply_range(pos, round_bracket_multiplier);
     }
 
-    for (int pos : square_brackets) {
+    for (size_t pos : square_brackets) {
         multiply_range(pos, square_bracket_multiplier);
     }
 
@@ -613,7 +620,7 @@ std::vector<std::pair<std::string, float>> parse_prompt_attention(const std::str
         res.push_back({"", 1.0f});
     }
 
-    int i = 0;
+    size_t i = 0;
     while (i + 1 < res.size()) {
         if (res[i].second == res[i + 1].second) {
             res[i].first += res[i + 1].first;

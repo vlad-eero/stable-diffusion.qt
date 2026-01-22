@@ -180,6 +180,21 @@ target_link_libraries(${SD_LIB} PUBLIC ggml zip)
 target_include_directories(${SD_LIB} PUBLIC . thirdparty)
 target_compile_features(${SD_LIB} PUBLIC c_std_11 cxx_std_17)
 
+# Add /bigobj flag for MSVC to handle large object files
+if(MSVC)
+    target_compile_options(${SD_LIB} PRIVATE /bigobj)
+    # Ensure consistent MSVC runtime library
+    set_property(TARGET ${SD_LIB} PROPERTY
+        MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>DLL")
+endif()
+
+
+# Set Qt6 path if it exists in the project directory
+if(EXISTS "${CMAKE_SOURCE_DIR}/qt6_msvc_install")
+    list(APPEND CMAKE_PREFIX_PATH "${CMAKE_SOURCE_DIR}/qt6_msvc_install")
+elseif(EXISTS "${CMAKE_SOURCE_DIR}/qt6_msvc_install_debug")
+    list(APPEND CMAKE_PREFIX_PATH "${CMAKE_SOURCE_DIR}/qt6_msvc_install_debug")
+endif()
 
 if (SD_BUILD_EXAMPLES)
     add_subdirectory(examples)
