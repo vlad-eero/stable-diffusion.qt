@@ -24,7 +24,13 @@ target_link_libraries(
 )
 
 target_compile_features(
-    ${TARGET} 
-    PUBLIC 
+    ${TARGET}
+    PUBLIC
     cxx_std_17
 )
+
+# Ensure consistent MSVC runtime library
+if(MSVC)
+    set_property(TARGET ${TARGET} PROPERTY
+        MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>DLL")
+endif()
